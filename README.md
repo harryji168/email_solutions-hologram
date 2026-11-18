@@ -10,3 +10,9 @@ pinch to zoom.
 
 Open the GitHub Pages address of this repository on a phone. On iPhone, tap
 **Start hologram** and allow motion access.
+
+## Pyramid viewer mode
+
+Tap **Pyramid viewer** (or open the page with `#pyramid` at the end of the
+address) to show four side views of the spinning tower around the centre of
+the screen, for a plastic hologram pyramid placed small end down on the phone.

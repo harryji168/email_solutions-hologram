@@ -11,6 +11,9 @@
           background: repeating-linear-gradient(to bottom, transparent 0 3px, rgba(53,224,255,.05) 3px 4px); }
   #start { position: fixed; left: 50%; bottom: calc(40px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
            padding: 14px 26px; border-radius: 999px; border: 0; background: #35e0ff; color: #04222b; font-size: 1rem; font-weight: 600; }
+  #mode { position: fixed; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+          padding: 8px 13px; border-radius: 999px; border: 1px solid #1c5666; background: rgba(0,0,0,.5); color: #35e0ff; font-size: .78rem; }
+  body.pyramid #mode { border-color: #222; color: #555; }
   #hint { position: fixed; left: 0; right: 0; top: calc(14px + env(safe-area-inset-top, 0px)); text-align: center;
           font-size: .85rem; color: #8fa8b3; pointer-events: none; padding: 0 16px; }
   [hidden] { display: none !important; }
@@ -18,9 +21,10 @@
 </head>
 <body>
 <canvas id="view"></canvas>
-<div class="scan"></div>
+<div class="scan" id="scan"></div>
 <div id="hint">Loading…</div>
 <button id="start" type="button" hidden>Start hologram</button>
+<button id="mode" type="button">Pyramid viewer</button>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -83,7 +87,7 @@ function resize() {
   renderer.setSize(w, h, false);
   W = 1; H = h / w;
   if (H < 1) { W = w / h; H = 1; }       // landscape: keep the short side at 1
-  buildBox(); place();
+  buildBox(); place(); if (typeof pyramid !== 'undefined') box.visible = !pyramid;
 }
 addEventListener('resize', resize); resize();
 
@@ -97,8 +101,9 @@ function show(name) {
     size = b.getSize(new THREE.Vector3());
     g.scene.position.set(-c.x, -b.min.y, -c.z);
     loaded = g.scene; spinner.add(loaded); spinner.rotation.y = name === 'taipei101' ? 0.6 : 0; place();
+    if (pyramid) return;
     hint.textContent = 'Tilt the phone to see the tower rise out of the screen. Drag to turn, pinch to zoom.';
-    setTimeout(() => { hint.hidden = true; }, 6000);
+    setTimeout(() => { if (!pyramid) hint.hidden = true; }, 6000);
   }, undefined, () => { hint.textContent = 'The model could not be loaded. Reload the page to try again.'; });
 }
 show(current);
@@ -143,7 +148,50 @@ canvas.addEventListener('pointermove', e => {
 ['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, e => ptrs.delete(e.pointerId)));
 canvas.addEventListener('wheel', e => { userScale = Math.max(0.6, Math.min(3, userScale * (e.deltaY < 0 ? 1.08 : 0.93))); place(); e.preventDefault(); }, { passive: false });
 
+// ---- pyramid viewer mode: four side views around the centre, for a plastic hologram pyramid ----
+const scanEl = document.getElementById('scan'), modeBtn = document.getElementById('mode');
+const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 5000);
+var pyramid = false, wasStartHidden = true, wake = null;
+function setMode(on) {
+  pyramid = on; document.body.classList.toggle('pyramid', on);
+  modeBtn.textContent = on ? 'Exit' : 'Pyramid viewer';
+  scanEl.hidden = on; box.visible = !on;
+  if (on) { wasStartHidden = startBtn.hidden; startBtn.hidden = true; hint.hidden = false;
+            hint.textContent = 'Turn the brightness up and stand the pyramid on the centre of the screen, small end down.';
+            setTimeout(() => { if (pyramid) hint.hidden = true; }, 7000);
+            if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => { wake = w; }).catch(() => {}); }
+  else { startBtn.hidden = wasStartHidden; hint.hidden = true; if (wake) { wake.release().catch(() => {}); wake = null; }
+         renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight); place(); }
+  try { history.replaceState(null, '', on ? '#pyramid' : location.pathname); } catch (e) {}
+}
+modeBtn.addEventListener('click', () => setMode(!pyramid));
+if (location.hash === '#pyramid') setMode(true);
+
+function renderPyramid() {
+  if (!size) { renderer.clear(); return; }
+  const w = innerWidth, h = innerHeight, S = Math.min(w, h), cx = w / 2, cy = h / 2;
+  const gap = S * 0.07, r = S / 2 - gap, tw = S * 0.34;      // r: cell length away from the centre, tw: cell width
+  const halfLen = size.y * 0.52, halfWid = halfLen * tw / r;
+  pivot.rotation.x = 0; pivot.position.set(0, 0, 0); pivot.scale.setScalar(1);
+  spinner.rotation.y += 0.006;
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, w, h); renderer.clear();
+  renderer.setScissorTest(true);
+  // each cell: [x, y (from bottom), width, height, camera roll]; the tower's top always points away from the centre
+  const cells = [[cx - tw / 2, cy + gap, tw, r, 0], [cx + gap, cy - tw / 2, r, tw, Math.PI / 2],
+                 [cx - tw / 2, cy - gap - r, tw, r, Math.PI], [cx - gap - r, cy - tw / 2, r, tw, -Math.PI / 2]];
+  cells.forEach(([x, y, vw, vh, roll], i) => {
+    const a = i * Math.PI / 2, tall = vh > vw;
+    ortho.left = tall ? -halfWid : -halfLen; ortho.right = -ortho.left;
+    ortho.top = tall ? halfLen : halfWid; ortho.bottom = -ortho.top; ortho.updateProjectionMatrix();
+    ortho.position.set(Math.sin(a) * 1500, size.y / 2 - 6, Math.cos(a) * 1500);
+    ortho.up.set(0, 1, 0); ortho.lookAt(0, size.y / 2 - 6, 0); ortho.rotateZ(roll); ortho.updateMatrixWorld();
+    renderer.setViewport(x, y, vw, vh); renderer.setScissor(x, y, vw, vh);
+    renderer.render(scene, ortho);
+  });
+}
+
 renderer.setAnimationLoop(t => {
+  if (pyramid) { renderPyramid(); return; }
   if (!gotTilt && t - lastInput > 3000) { tax = Math.sin(t / 1700) * 0.38; tay = Math.sin(t / 2300) * 0.16; }   // idle sway
   ax += (tax - ax) * 0.12; ay += (tay - ay) * 0.12;
   if (autoSpin) spinner.rotation.y += 0.003;
