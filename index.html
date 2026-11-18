@@ -66,7 +66,7 @@ const pivot = new THREE.Group(); scene.add(pivot);   // tilted so we look down i
 const spinner = new THREE.Group(); pivot.add(spinner);
 let userScale = 1;
 const MODELS = {
-  taipei101: { file: 'taipei101.glb', label: 'Taipei 101', tilt: 0.10, y: -0.37, z: 0.40 },
+  taipei101: { file: 'taipei101.glb', label: 'Taipei 101', tilt: Math.PI / 2, y: 0, z: 1, length: 1.55 }   // base on the back wall, top pointing out of the screen,
 };
 let current = 'taipei101', loaded = null, size = null;
 function place() {
@@ -74,7 +74,7 @@ function place() {
   pivot.rotation.x = m.tilt;
   pivot.position.set(0, H * m.y, -DEPTH * m.z);
   let k = 1;
-  if (size) k = Math.min(0.86 * W / Math.max(size.x, size.z), 0.76 * H / size.y);   // fit width and height
+  if (size) k = Math.min(m.length / size.y, 0.9 * W / Math.max(size.x, size.z));   // tower length runs front to back
   pivot.scale.setScalar(k * userScale);
 }
 
@@ -97,7 +97,7 @@ function show(name) {
     size = b.getSize(new THREE.Vector3());
     g.scene.position.set(-c.x, -b.min.y, -c.z);
     loaded = g.scene; spinner.add(loaded); spinner.rotation.y = name === 'taipei101' ? 0.6 : 0; place();
-    hint.textContent = 'Tilt the phone to look around. Drag to turn, pinch to zoom.';
+    hint.textContent = 'Tilt the phone to see the tower rise out of the screen. Drag to turn, pinch to zoom.';
     setTimeout(() => { hint.hidden = true; }, 6000);
   }, undefined, () => { hint.textContent = 'The model could not be loaded. Reload the page to try again.'; });
 }
