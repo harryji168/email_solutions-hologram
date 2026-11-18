@@ -23,3 +23,15 @@ Tap the mode button twice (or open the page with `#sheet` at the end of the
 address) to show one large tower for a single clear sheet leaning at 45
 degrees over the screen. The sheet's bottom edge sits on the far side of the
 phone and its top edge leans toward the viewer.
+
+## Big screen mode
+
+Open the page with `#screen` at the end of the address (or tap the mode button
+until it shows) for one upright tower on black, for a projector or TV.
+
+## Hand gestures
+
+Tap **Hand gestures** and allow camera access. Move an open hand left or right
+to turn the tower; pinch thumb and index finger and move up or down to zoom.
+Works in every mode. Hand tracking uses MediaPipe and runs in the browser; no
+video leaves the device.

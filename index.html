@@ -13,6 +13,14 @@
            padding: 14px 26px; border-radius: 999px; border: 0; background: #35e0ff; color: #04222b; font-size: 1rem; font-weight: 600; }
   #mode { position: fixed; right: calc(12px + env(safe-area-inset-right, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px));
           padding: 8px 13px; border-radius: 999px; border: 1px solid #1c5666; background: rgba(0,0,0,.5); color: #35e0ff; font-size: .78rem; }
+  #gest { position: fixed; left: calc(12px + env(safe-area-inset-left, 0px)); bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+          padding: 8px 13px; border-radius: 999px; border: 1px solid #1c5666; background: rgba(0,0,0,.5); color: #35e0ff; font-size: .78rem; }
+  #gest.on { background: #35e0ff; color: #04222b; }
+  body.pyramid #gest { border-color: #222; color: #555; background: #000; }
+  #cam { position: fixed; left: calc(12px + env(safe-area-inset-left, 0px)); bottom: calc(56px + env(safe-area-inset-bottom, 0px)); width: 96px; height: 72px;
+         object-fit: cover; transform: scaleX(-1); border-radius: 8px; border: 1px solid #1c5666; opacity: .75; display: none; }
+  #cam.on { display: block; }
+  body.pyramid #cam.on { opacity: 0; width: 1px; height: 1px; }
   body.pyramid #mode { border-color: #222; color: #555; }
   #hint { position: fixed; left: 0; right: 0; top: calc(14px + env(safe-area-inset-top, 0px)); text-align: center;
           font-size: .85rem; color: #8fa8b3; pointer-events: none; padding: 0 16px; }
@@ -25,6 +33,8 @@
 <div id="hint">Loading…</div>
 <button id="start" type="button" hidden>Start hologram</button>
 <button id="mode" type="button">Pyramid viewer</button>
+<button id="gest" type="button">Hand gestures</button>
+<video id="cam" playsinline muted></video>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -143,7 +153,7 @@ canvas.addEventListener('pointermove', e => {
   const prev = ptrs.get(e.pointerId); if (!prev) return; ptrs.set(e.pointerId, e);
   if (ptrs.size === 1 && e.pointerType !== 'mouse' || (e.pointerType === 'mouse' && e.buttons)) spinner.rotation.y += (e.clientX - prev.clientX) * 0.01;
   else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()];
-    userScale = Math.max(0.6, Math.min(3, scale0 * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch0)); place(); }
+    userScale = Math.max(0.3, Math.min(3, scale0 * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch0)); place(); }
 });
 ['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, e => ptrs.delete(e.pointerId)));
 canvas.addEventListener('wheel', e => { userScale = Math.max(0.6, Math.min(3, userScale * (e.deltaY < 0 ? 1.08 : 0.93))); place(); e.preventDefault(); }, { passive: false });
@@ -152,13 +162,15 @@ canvas.addEventListener('wheel', e => { userScale = Math.max(0.6, Math.min(3, us
 const scanEl = document.getElementById('scan'), modeBtn = document.getElementById('mode');
 const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 5000);
 var pyramid = false, sheet = false, wasStartHidden = true, wake = null;
-const MODES = ['tilt', 'pyramid', 'sheet'];
-const NEXT = { tilt: 'Pyramid viewer', pyramid: 'Sheet viewer', sheet: 'Exit' };
+const MODES = ['tilt', 'pyramid', 'sheet', 'screen'];
+var upright = false;
+const NEXT = { tilt: 'Pyramid viewer', pyramid: 'Sheet viewer', sheet: 'Big screen', screen: 'Exit' };
 const TIPS = { pyramid: 'Turn the brightness up and stand the pyramid on the centre of the screen, small end down.',
+               screen: 'Big screen view for a projector or TV. Use full screen in your browser.',
                sheet: 'Turn the brightness up. Lean a clear sheet at 45° over the screen, top edge toward you, and look from this side.' };
 let modeName = 'tilt';
 function setMode(name) {
-  const was = modeName; modeName = name; pyramid = name === 'pyramid'; sheet = name === 'sheet';
+  const was = modeName; modeName = name; pyramid = name === 'pyramid'; sheet = name === 'sheet' || name === 'screen'; upright = name === 'screen';
   const special = pyramid || sheet;
   document.body.classList.toggle('pyramid', special);
   modeBtn.textContent = NEXT[name];
@@ -175,28 +187,81 @@ function setMode(name) {
   try { history.replaceState(null, '', special ? '#' + name : location.pathname); } catch (e) {}
 }
 modeBtn.addEventListener('click', () => setMode(MODES[(MODES.indexOf(modeName) + 1) % MODES.length]));
-if (location.hash === '#pyramid' || location.hash === '#sheet') setMode(location.hash.slice(1));
+if (['#pyramid', '#sheet', '#screen'].includes(location.hash)) setMode(location.hash.slice(1));
 
 // single clear sheet at 45 degrees: one large view, tower top pointing at the viewer's edge of the screen
 function renderSheet() {
   renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight); renderer.clear();
   if (!size) return;
-  const w = innerWidth, h = innerHeight, halfLen = size.y * 0.54, halfWid = halfLen * w / h;
+  const w = innerWidth, h = innerHeight, halfLen = size.y * 0.54 / userScale, halfWid = halfLen * w / h;
   pivot.rotation.x = 0; pivot.position.set(0, 0, 0); pivot.scale.setScalar(1);
-  spinner.rotation.y += 0.006;
+  if (!gestures) spinner.rotation.y += 0.006;
   ortho.left = -halfWid; ortho.right = halfWid; ortho.top = halfLen; ortho.bottom = -halfLen; ortho.updateProjectionMatrix();
   ortho.position.set(0, size.y / 2 - 6, 1500); ortho.up.set(0, 1, 0); ortho.lookAt(0, size.y / 2 - 6, 0);
-  ortho.rotateZ(Math.PI); ortho.updateMatrixWorld();
+  ortho.rotateZ(upright ? 0 : Math.PI); ortho.updateMatrixWorld();
   renderer.render(scene, ortho);
+}
+
+// ---- hand gestures by camera: open hand moves left/right to turn, pinch and move up/down to zoom ----
+var gestures = false;
+const gestBtn = document.getElementById('gest'), camEl = document.getElementById('cam');
+let landmarker = null, camStream = null, prevHand = null, lastVideoTime = -1;
+function say(text, ms) { hint.hidden = false; hint.textContent = text; if (ms) setTimeout(() => { if (hint.textContent === text) hint.hidden = true; }, ms); }
+async function startGestures() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { say('This browser cannot use the camera here.', 6000); return; }
+  gestBtn.disabled = true; say('Starting the camera…');
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 320, height: 240 }, audio: false });
+    camEl.srcObject = camStream; await camEl.play();
+    if (!landmarker) {
+      say('Loading hand tracking…');
+      const V = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+      const mp = await import(V + '/vision_bundle.mjs');
+      const files = await mp.FilesetResolver.forVisionTasks(V + '/wasm');
+      landmarker = await mp.HandLandmarker.createFromOptions(files, {
+        baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task' },
+        runningMode: 'VIDEO', numHands: 1 });
+    }
+    gestures = true; autoSpin = false; prevHand = null;
+    gestBtn.classList.add('on'); camEl.classList.add('on'); gestBtn.textContent = 'Gestures on';
+    say('Move an open hand left or right to turn. Pinch thumb and finger, then move up or down to zoom.', 9000);
+  } catch (e) {
+    stopGestures();
+    say(e && e.name === 'NotAllowedError' ? 'Camera access was not allowed, so hand gestures are off.' : 'Hand gestures could not start on this device.', 7000);
+  }
+  gestBtn.disabled = false;
+}
+function stopGestures() {
+  gestures = false; prevHand = null;
+  if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  camEl.srcObject = null; camEl.classList.remove('on'); gestBtn.classList.remove('on'); gestBtn.textContent = 'Hand gestures';
+}
+gestBtn.addEventListener('click', () => { if (gestures) { stopGestures(); hint.hidden = true; } else startGestures(); });
+function trackHand(now) {
+  if (!gestures || !landmarker || camEl.readyState < 2 || camEl.currentTime === lastVideoTime) return;
+  lastVideoTime = camEl.currentTime;
+  let res; try { res = landmarker.detectForVideo(camEl, now); } catch (e) { return; }
+  const lm = res && res.landmarks && res.landmarks[0];
+  if (!lm) { prevHand = null; return; }
+  const d = (a, b) => Math.hypot(lm[a].x - lm[b].x, lm[a].y - lm[b].y);
+  const hand = { x: lm[9].x, y: lm[9].y, pinch: d(4, 8) / (d(0, 9) || 1) < 0.35 };
+  if (prevHand) {
+    const dx = hand.x - prevHand.x, dy = hand.y - prevHand.y;
+    if (Math.abs(dx) < 0.25 && Math.abs(dy) < 0.25) {            // ignore jumps when tracking re-acquires
+      if (hand.pinch && prevHand.pinch) { userScale = Math.max(0.3, Math.min(3, userScale * Math.exp(-dy * 3))); if (!pyramid && !sheet) place(); }
+      else if (!hand.pinch) spinner.rotation.y -= dx * 7;         // camera image is unmirrored: hand moving right turns the tower right
+    }
+  }
+  prevHand = hand;
 }
 
 function renderPyramid() {
   if (!size) { renderer.clear(); return; }
   const w = innerWidth, h = innerHeight, S = Math.min(w, h), cx = w / 2, cy = h / 2;
   const gap = S * 0.07, r = S / 2 - gap, tw = S * 0.34;      // r: cell length away from the centre, tw: cell width
-  const halfLen = size.y * 0.52, halfWid = halfLen * tw / r;
+  const halfLen = size.y * 0.52 / userScale, halfWid = halfLen * tw / r;
   pivot.rotation.x = 0; pivot.position.set(0, 0, 0); pivot.scale.setScalar(1);
-  spinner.rotation.y += 0.006;
+  if (!gestures) spinner.rotation.y += 0.006;
   renderer.setScissorTest(false); renderer.setViewport(0, 0, w, h); renderer.clear();
   renderer.setScissorTest(true);
   // each cell: [x, y (from bottom), width, height, camera roll]; the tower's top always points away from the centre
@@ -214,6 +279,7 @@ function renderPyramid() {
 }
 
 renderer.setAnimationLoop(t => {
+  trackHand(t);
   if (pyramid) { renderPyramid(); return; }
   if (sheet) { renderSheet(); return; }
   if (!gotTilt && t - lastInput > 3000) { tax = Math.sin(t / 1700) * 0.38; tay = Math.sin(t / 2300) * 0.16; }   // idle sway
