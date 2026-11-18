@@ -87,7 +87,7 @@ function resize() {
   renderer.setSize(w, h, false);
   W = 1; H = h / w;
   if (H < 1) { W = w / h; H = 1; }       // landscape: keep the short side at 1
-  buildBox(); place(); if (typeof pyramid !== 'undefined') box.visible = !pyramid;
+  buildBox(); place(); if (typeof pyramid !== 'undefined') box.visible = !(pyramid || sheet);
 }
 addEventListener('resize', resize); resize();
 
@@ -101,9 +101,9 @@ function show(name) {
     size = b.getSize(new THREE.Vector3());
     g.scene.position.set(-c.x, -b.min.y, -c.z);
     loaded = g.scene; spinner.add(loaded); spinner.rotation.y = name === 'taipei101' ? 0.6 : 0; place();
-    if (pyramid) return;
+    if (pyramid || sheet) return;
     hint.textContent = 'Tilt the phone to see the tower rise out of the screen. Drag to turn, pinch to zoom.';
-    setTimeout(() => { if (!pyramid) hint.hidden = true; }, 6000);
+    setTimeout(() => { if (!(pyramid || sheet)) hint.hidden = true; }, 6000);
   }, undefined, () => { hint.textContent = 'The model could not be loaded. Reload the page to try again.'; });
 }
 show(current);
@@ -151,21 +151,44 @@ canvas.addEventListener('wheel', e => { userScale = Math.max(0.6, Math.min(3, us
 // ---- pyramid viewer mode: four side views around the centre, for a plastic hologram pyramid ----
 const scanEl = document.getElementById('scan'), modeBtn = document.getElementById('mode');
 const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 5000);
-var pyramid = false, wasStartHidden = true, wake = null;
-function setMode(on) {
-  pyramid = on; document.body.classList.toggle('pyramid', on);
-  modeBtn.textContent = on ? 'Exit' : 'Pyramid viewer';
-  scanEl.hidden = on; box.visible = !on;
-  if (on) { wasStartHidden = startBtn.hidden; startBtn.hidden = true; hint.hidden = false;
-            hint.textContent = 'Turn the brightness up and stand the pyramid on the centre of the screen, small end down.';
-            setTimeout(() => { if (pyramid) hint.hidden = true; }, 7000);
-            if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => { wake = w; }).catch(() => {}); }
-  else { startBtn.hidden = wasStartHidden; hint.hidden = true; if (wake) { wake.release().catch(() => {}); wake = null; }
-         renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight); place(); }
-  try { history.replaceState(null, '', on ? '#pyramid' : location.pathname); } catch (e) {}
+var pyramid = false, sheet = false, wasStartHidden = true, wake = null;
+const MODES = ['tilt', 'pyramid', 'sheet'];
+const NEXT = { tilt: 'Pyramid viewer', pyramid: 'Sheet viewer', sheet: 'Exit' };
+const TIPS = { pyramid: 'Turn the brightness up and stand the pyramid on the centre of the screen, small end down.',
+               sheet: 'Turn the brightness up. Lean a clear sheet at 45° over the screen, top edge toward you, and look from this side.' };
+let modeName = 'tilt';
+function setMode(name) {
+  const was = modeName; modeName = name; pyramid = name === 'pyramid'; sheet = name === 'sheet';
+  const special = pyramid || sheet;
+  document.body.classList.toggle('pyramid', special);
+  modeBtn.textContent = NEXT[name];
+  scanEl.hidden = special; box.visible = !special;
+  if (special) {
+    if (was === 'tilt') wasStartHidden = startBtn.hidden;
+    startBtn.hidden = true; hint.hidden = false; hint.textContent = TIPS[name];
+    setTimeout(() => { if (modeName === name) hint.hidden = true; }, 8000);
+    if (navigator.wakeLock && !wake) navigator.wakeLock.request('screen').then(w => { wake = w; }).catch(() => {});
+  } else {
+    startBtn.hidden = wasStartHidden; hint.hidden = true; if (wake) { wake.release().catch(() => {}); wake = null; }
+    renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight); place();
+  }
+  try { history.replaceState(null, '', special ? '#' + name : location.pathname); } catch (e) {}
 }
-modeBtn.addEventListener('click', () => setMode(!pyramid));
-if (location.hash === '#pyramid') setMode(true);
+modeBtn.addEventListener('click', () => setMode(MODES[(MODES.indexOf(modeName) + 1) % MODES.length]));
+if (location.hash === '#pyramid' || location.hash === '#sheet') setMode(location.hash.slice(1));
+
+// single clear sheet at 45 degrees: one large view, tower top pointing at the viewer's edge of the screen
+function renderSheet() {
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight); renderer.clear();
+  if (!size) return;
+  const w = innerWidth, h = innerHeight, halfLen = size.y * 0.54, halfWid = halfLen * w / h;
+  pivot.rotation.x = 0; pivot.position.set(0, 0, 0); pivot.scale.setScalar(1);
+  spinner.rotation.y += 0.006;
+  ortho.left = -halfWid; ortho.right = halfWid; ortho.top = halfLen; ortho.bottom = -halfLen; ortho.updateProjectionMatrix();
+  ortho.position.set(0, size.y / 2 - 6, 1500); ortho.up.set(0, 1, 0); ortho.lookAt(0, size.y / 2 - 6, 0);
+  ortho.rotateZ(Math.PI); ortho.updateMatrixWorld();
+  renderer.render(scene, ortho);
+}
 
 function renderPyramid() {
   if (!size) { renderer.clear(); return; }
@@ -192,6 +215,7 @@ function renderPyramid() {
 
 renderer.setAnimationLoop(t => {
   if (pyramid) { renderPyramid(); return; }
+  if (sheet) { renderSheet(); return; }
   if (!gotTilt && t - lastInput > 3000) { tax = Math.sin(t / 1700) * 0.38; tay = Math.sin(t / 2300) * 0.16; }   // idle sway
   ax += (tax - ax) * 0.12; ay += (tay - ay) * 0.12;
   if (autoSpin) spinner.rotation.y += 0.003;

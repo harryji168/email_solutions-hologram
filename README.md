@@ -16,3 +16,10 @@ Open the GitHub Pages address of this repository on a phone. On iPhone, tap
 Tap **Pyramid viewer** (or open the page with `#pyramid` at the end of the
 address) to show four side views of the spinning tower around the centre of
 the screen, for a plastic hologram pyramid placed small end down on the phone.
+
+## Sheet viewer mode
+
+Tap the mode button twice (or open the page with `#sheet` at the end of the
+address) to show one large tower for a single clear sheet leaning at 45
+degrees over the screen. The sheet's bottom edge sits on the far side of the
+phone and its top edge leans toward the viewer.
