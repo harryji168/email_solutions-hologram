@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Apartment Hologram</title>
+<title>Hologram Sample</title>
 <style>
   html, body { height: 100%; margin: 0; background: #000; color: #e6f3f7; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; overscroll-behavior: none; }
   canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
@@ -11,6 +11,8 @@
           background: repeating-linear-gradient(to bottom, transparent 0 3px, rgba(53,224,255,.05) 3px 4px); }
   #start { position: fixed; left: 50%; bottom: calc(40px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
            padding: 14px 26px; border-radius: 999px; border: 0; background: #35e0ff; color: #04222b; font-size: 1rem; font-weight: 600; }
+  #swap { position: fixed; right: calc(14px + env(safe-area-inset-right, 0px)); bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+          padding: 9px 14px; border-radius: 999px; border: 1px solid #35e0ff; background: rgba(0,0,0,.5); color: #35e0ff; font-size: .8rem; }
   #hint { position: fixed; left: 0; right: 0; top: calc(14px + env(safe-area-inset-top, 0px)); text-align: center;
           font-size: .85rem; color: #8fa8b3; pointer-events: none; padding: 0 16px; }
   [hidden] { display: none !important; }
@@ -21,6 +23,7 @@
 <div class="scan"></div>
 <div id="hint">Loading…</div>
 <button id="start" type="button" hidden>Start hologram</button>
+<button id="swap" type="button">Show apartment</button>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -64,9 +67,20 @@ function buildBox() {
 
 const pivot = new THREE.Group(); scene.add(pivot);   // tilted so we look down into the rooms
 const spinner = new THREE.Group(); pivot.add(spinner);
-pivot.rotation.x = 0.62;
 let userScale = 1;
-function place() { pivot.position.set(0, -H * 0.08, -DEPTH * 0.22); pivot.scale.setScalar(userScale); }
+const MODELS = {
+  taipei101: { file: 'taipei101.glb', label: 'Taipei 101', tilt: 0.10, y: -0.37, z: 0.40 },
+  apartment: { file: 'apartment.glb', label: 'apartment', tilt: 0.62, y: -0.08, z: 0.22 },
+};
+let current = 'taipei101', loaded = null, size = null;
+function place() {
+  const m = MODELS[current];
+  pivot.rotation.x = m.tilt;
+  pivot.position.set(0, H * m.y, -DEPTH * m.z);
+  let k = 1;
+  if (size) k = Math.min(0.86 * W / Math.max(size.x, size.z), 0.76 * H / size.y);   // fit width and height
+  pivot.scale.setScalar(k * userScale);
+}
 
 function resize() {
   const w = innerWidth, h = innerHeight;
@@ -77,14 +91,24 @@ function resize() {
 }
 addEventListener('resize', resize); resize();
 
-new THREE.GLTFLoader().load('apartment.glb', g => {
-  const b = new THREE.Box3().setFromObject(g.scene), c = b.getCenter(new THREE.Vector3()), s = b.getSize(new THREE.Vector3());
-  const k = 0.86 / Math.max(s.x, s.z);
-  g.scene.position.set(-c.x * k, -b.min.y * k, -c.z * k); g.scene.scale.setScalar(k);
-  spinner.add(g.scene);
-  hint.textContent = 'Tilt the phone to look around. Drag to turn, pinch to zoom.';
-  setTimeout(() => { hint.hidden = true; }, 6000);
-}, undefined, () => { hint.textContent = 'The model could not be loaded. Reload the page to try again.'; });
+const swap = document.getElementById('swap');
+function show(name) {
+  current = name; userScale = 1;
+  if (loaded) { spinner.remove(loaded); loaded = null; }
+  hint.hidden = false; hint.textContent = 'Loading…';
+  new THREE.GLTFLoader().load(MODELS[name].file, g => {
+    if (current !== name) return;
+    const b = new THREE.Box3().setFromObject(g.scene), c = b.getCenter(new THREE.Vector3());
+    size = b.getSize(new THREE.Vector3());
+    g.scene.position.set(-c.x, -b.min.y, -c.z);
+    loaded = g.scene; spinner.add(loaded); spinner.rotation.y = name === 'taipei101' ? 0.6 : 0; place();
+    hint.textContent = 'Tilt the phone to look around. Drag to turn, pinch to zoom.';
+    setTimeout(() => { hint.hidden = true; }, 6000);
+  }, undefined, () => { hint.textContent = 'The model could not be loaded. Reload the page to try again.'; });
+  const other = name === 'taipei101' ? 'apartment' : 'taipei101';
+  swap.textContent = 'Show ' + MODELS[other].label; swap.onclick = () => show(other);
+}
+show(current);
 
 // ---- viewer eye position, driven by phone tilt (or mouse, or a gentle sway) ----
 let ax = 0, ay = 0, tax = 0, tay = 0;   // current and target view angles (radians)
