@@ -110,7 +110,8 @@ function show(name) {
     const b = new THREE.Box3().setFromObject(g.scene), c = b.getCenter(new THREE.Vector3());
     size = b.getSize(new THREE.Vector3());
     g.scene.position.set(-c.x, -b.min.y, -c.z);
-    loaded = g.scene; spinner.add(loaded); spinner.rotation.y = name === 'taipei101' ? 0.6 : 0; place();
+    g.scene.traverse(o => { if (o.isMesh && new THREE.Box3().setFromObject(o).max.y <= 0) o.userData.stage = true; });
+    loaded = g.scene; spinner.add(loaded); showStage(!(pyramid || sheet)); spinner.rotation.y = name === 'taipei101' ? 0.6 : 0; place();
     if (pyramid || sheet) return;
     hint.textContent = 'Tilt the phone to see the tower rise out of the screen. Drag to turn, pinch to zoom.';
     setTimeout(() => { if (!(pyramid || sheet)) hint.hidden = true; }, 6000);
@@ -156,7 +157,7 @@ canvas.addEventListener('pointermove', e => {
     userScale = Math.max(0.3, Math.min(3, scale0 * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch0)); place(); }
 });
 ['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, e => { ptrs.delete(e.pointerId);
-  if (pyramid) { userScale = Math.min(1, userScale); try { localStorage.setItem('pyramidSize', String(userScale)); } catch (err) {} } }));
+  if (pyramid) { userScale = Math.min(1.6, userScale); try { localStorage.setItem('pyramidSize', String(userScale)); } catch (err) {} } }));
 canvas.addEventListener('wheel', e => { userScale = Math.max(0.6, Math.min(3, userScale * (e.deltaY < 0 ? 1.08 : 0.93))); place(); e.preventDefault(); }, { passive: false });
 
 // ---- pyramid viewer mode: four side views around the centre, for a plastic hologram pyramid ----
@@ -170,14 +171,15 @@ const TIPS = { pyramid: 'Pinch to make the four towers fit your pyramid, then pu
                screen: 'Big screen view for a projector or TV. Use full screen in your browser.',
                sheet: 'Turn the brightness up. Lean a clear sheet at 45° over the screen, top edge toward you, and look from this side.' };
 let modeName = 'tilt';
+function showStage(on) { if (loaded) loaded.traverse(o => { if (o.userData.stage) o.visible = on; }); }
 function setMode(name) {
   const was = modeName; modeName = name; pyramid = name === 'pyramid'; sheet = name === 'sheet' || name === 'screen'; upright = name === 'screen';
   const special = pyramid || sheet;
   userScale = 1;
-  if (pyramid) { try { userScale = Math.max(0.3, Math.min(1, parseFloat(localStorage.getItem('pyramidSize')) || 1)); } catch (e) {} }
+  if (pyramid) { try { userScale = Math.max(0.3, Math.min(1.6, parseFloat(localStorage.getItem('pyramidSize')) || 1)); } catch (e) {} }
   document.body.classList.toggle('pyramid', special);
   modeBtn.textContent = NEXT[name];
-  scanEl.hidden = special; box.visible = !special;
+  scanEl.hidden = special; box.visible = !special; showStage(!special);
   if (special) {
     if (was === 'tilt') wasStartHidden = startBtn.hidden;
     startBtn.hidden = true; hint.hidden = false; hint.textContent = TIPS[name];
@@ -260,13 +262,13 @@ function trackHand(now) {
 
 function renderPyramid() {
   if (!size) { renderer.clear(); return; }
-  const w = innerWidth, h = innerHeight, S = Math.min(w, h) * Math.min(1, userScale), cx = w / 2, cy = h / 2;   // pinch resizes the whole layout to fit the pyramid
-  const gap = S * 0.07, r = S / 2 - gap, tw = S * 0.34;      // r: cell length away from the centre, tw: cell width
-  const halfLen = size.y * 0.52, halfWid = halfLen * tw / r;
+  const w = innerWidth, h = innerHeight, S = Math.min(w, h) * Math.min(1.6, userScale), cx = w / 2, cy = h / 2;   // pinch resizes the whole layout to fit the pyramid
+  const gap = S * 0.035, r = S / 2 - gap, tw = S * 0.36;      // r: cell length away from the centre, tw: cell width
+  const halfLen = size.y * 0.5, halfWid = halfLen * tw / r;
   pivot.rotation.x = 0; pivot.position.set(0, 0, 0); pivot.scale.setScalar(1);
   if (!gestures) spinner.rotation.y += 0.006;
   renderer.setScissorTest(false); renderer.setViewport(0, 0, w, h); renderer.clear();
-  renderer.setScissorTest(true);
+  renderer.setScissorTest(true); renderer.autoClear = false;   // cells overlap near the centre, so don't let one wipe another
   // each cell: [x, y (from bottom), width, height, camera roll]; the tower's top always points away from the centre
   const cells = [[cx - tw / 2, cy + gap, tw, r, 0], [cx + gap, cy - tw / 2, r, tw, Math.PI / 2],
                  [cx - tw / 2, cy - gap - r, tw, r, Math.PI], [cx - gap - r, cy - tw / 2, r, tw, -Math.PI / 2]];
@@ -274,11 +276,12 @@ function renderPyramid() {
     const a = i * Math.PI / 2, tall = vh > vw;
     ortho.left = tall ? -halfWid : -halfLen; ortho.right = -ortho.left;
     ortho.top = tall ? halfLen : halfWid; ortho.bottom = -ortho.top; ortho.updateProjectionMatrix();
-    ortho.position.set(Math.sin(a) * 1500, size.y / 2 - 6, Math.cos(a) * 1500);
-    ortho.up.set(0, 1, 0); ortho.lookAt(0, size.y / 2 - 6, 0); ortho.rotateZ(roll); ortho.updateMatrixWorld();
+    ortho.position.set(Math.sin(a) * 1500, size.y / 2 + 3, Math.cos(a) * 1500);
+    ortho.up.set(0, 1, 0); ortho.lookAt(0, size.y / 2 + 3, 0); ortho.rotateZ(roll); ortho.updateMatrixWorld();
     renderer.setViewport(x, y, vw, vh); renderer.setScissor(x, y, vw, vh);
-    renderer.render(scene, ortho);
+    renderer.clearDepth(); renderer.render(scene, ortho);
   });
+  renderer.autoClear = true;
 }
 
 renderer.setAnimationLoop(t => {
