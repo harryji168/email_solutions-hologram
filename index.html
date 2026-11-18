@@ -2,22 +2,141 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Apartment Hologram AR</title>
-<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Apartment Hologram</title>
 <style>
-  html, body { height: 100%; margin: 0; background: #070b12; color: #e6f3f7; font-family: system-ui, sans-serif; }
-  model-viewer { width: 100%; height: 100%; }
-  #ar { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); padding: 14px 26px; border-radius: 999px;
-        border: 0; background: #35e0ff; color: #04222b; font-size: 1rem; font-weight: 600; }
+  html, body { height: 100%; margin: 0; background: #000; color: #e6f3f7; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; overscroll-behavior: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .scan { position: fixed; inset: 0; pointer-events: none; mix-blend-mode: screen;
+          background: repeating-linear-gradient(to bottom, transparent 0 3px, rgba(53,224,255,.05) 3px 4px); }
+  #start { position: fixed; left: 50%; bottom: calc(40px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+           padding: 14px 26px; border-radius: 999px; border: 0; background: #35e0ff; color: #04222b; font-size: 1rem; font-weight: 600; }
+  #hint { position: fixed; left: 0; right: 0; top: calc(14px + env(safe-area-inset-top, 0px)); text-align: center;
+          font-size: .85rem; color: #8fa8b3; pointer-events: none; padding: 0 16px; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
-<!-- ar-scale="auto" lets the visitor pinch the model down to table or palm size in AR -->
-<model-viewer src="apartment.glb" alt="3D model of a one-bedroom apartment"
-  ar ar-modes="webxr scene-viewer quick-look" ar-scale="auto" ar-placement="floor"
-  camera-controls touch-action="pan-y" auto-rotate shadow-intensity="1" exposure="1.1">
-  <button slot="ar-button" id="ar">View in your space</button>
-</model-viewer>
+<canvas id="view"></canvas>
+<div class="scan"></div>
+<div id="hint">Loading…</div>
+<button id="start" type="button" hidden>Start hologram</button>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+// The screen is treated as a window into a box. The camera is the viewer's eye; as the phone
+// tilts, the eye moves and the view through the window is re-projected (off-axis projection),
+// so the model looks like a solid miniature sitting inside the phone.
+const canvas = document.getElementById('view'), hint = document.getElementById('hint'), startBtn = document.getElementById('start');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputEncoding = THREE.sRGBEncoding;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera();
+camera.matrixAutoUpdate = true;
+
+let W = 1, H = 1;                 // window size in world units (width is always 1)
+const DEPTH = 1.1;                // how deep the box behind the screen is
+const EYE = 2.4;                  // viewer distance from the screen, in screen widths
+const GAIN = 1.6, MAXA = 0.6;    // tilt amplification and limit (radians)
+
+scene.add(new THREE.HemisphereLight(0xdff6ff, 0x0b1a24, 0.95));
+const sun = new THREE.DirectionalLight(0xffffff, 0.9); sun.position.set(0.6, 1.5, 1.2); scene.add(sun);
+const rim = new THREE.DirectionalLight(0x35e0ff, 0.5); rim.position.set(-1, 0.4, -0.6); scene.add(rim);
+
+// grid box behind the screen: this is what makes the depth readable
+let box;
+function buildBox() {
+  if (box) scene.remove(box);
+  const pts = [], n = 8, x0 = -W/2, x1 = W/2, y0 = -H/2, y1 = H/2, z1 = -DEPTH;
+  const L = (a, b) => pts.push(...a, ...b);
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, x = x0 + W * t, y = y0 + H * t, z = z1 * t;
+    L([x, y0, 0], [x, y0, z1]); L([x, y1, 0], [x, y1, z1]); L([x, y0, z1], [x, y1, z1]);   // floor, ceiling, back verticals
+    L([x0, y, 0], [x0, y, z1]); L([x1, y, 0], [x1, y, z1]); L([x0, y, z1], [x1, y, z1]);   // side walls, back horizontals
+    L([x0, y0, z], [x1, y0, z]); L([x0, y1, z], [x1, y1, z]); L([x0, y0, z], [x0, y1, z]); L([x1, y0, z], [x1, y1, z]);
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  box = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0x35e0ff, transparent: true, opacity: 0.28 }));
+  scene.add(box);
+}
+
+const pivot = new THREE.Group(); scene.add(pivot);   // tilted so we look down into the rooms
+const spinner = new THREE.Group(); pivot.add(spinner);
+pivot.rotation.x = 0.62;
+let userScale = 1;
+function place() { pivot.position.set(0, -H * 0.08, -DEPTH * 0.22); pivot.scale.setScalar(userScale); }
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  W = 1; H = h / w;
+  if (H < 1) { W = w / h; H = 1; }       // landscape: keep the short side at 1
+  buildBox(); place();
+}
+addEventListener('resize', resize); resize();
+
+new THREE.GLTFLoader().load('apartment.glb', g => {
+  const b = new THREE.Box3().setFromObject(g.scene), c = b.getCenter(new THREE.Vector3()), s = b.getSize(new THREE.Vector3());
+  const k = 0.86 / Math.max(s.x, s.z);
+  g.scene.position.set(-c.x * k, -b.min.y * k, -c.z * k); g.scene.scale.setScalar(k);
+  spinner.add(g.scene);
+  hint.textContent = 'Tilt the phone to look around. Drag to turn, pinch to zoom.';
+  setTimeout(() => { hint.hidden = true; }, 6000);
+}, undefined, () => { hint.textContent = 'The model could not be loaded. Reload the page to try again.'; });
+
+// ---- viewer eye position, driven by phone tilt (or mouse, or a gentle sway) ----
+let ax = 0, ay = 0, tax = 0, tay = 0;   // current and target view angles (radians)
+let base = null, gotTilt = false, lastInput = 0;
+function onTilt(e) {
+  if (e.beta == null || e.gamma == null) return;
+  let b = e.beta, g = e.gamma;
+  const o = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+  if (o === 90) [b, g] = [-g, b]; else if (o === 270 || o === -90) [b, g] = [g, -b];
+  if (!base) base = { b, g };
+  gotTilt = true;
+  const rad = Math.PI / 180, cl = v => Math.max(-MAXA, Math.min(MAXA, v));
+  tax = cl(-(g - base.g) * rad * GAIN);      // left/right
+  tay = cl((b - base.b) * rad * GAIN);       // up/down
+}
+function listen() { addEventListener('deviceorientation', onTilt); }
+if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+  startBtn.hidden = false;                   // iPhone: motion access must be asked for from a tap
+  startBtn.addEventListener('click', () => {
+    DeviceOrientationEvent.requestPermission().then(r => { if (r === 'granted') listen(); }).catch(() => {}).finally(() => { startBtn.hidden = true; });
+  });
+} else if ('DeviceOrientationEvent' in window) listen();
+addEventListener('mousemove', e => {         // desktop: the mouse stands in for tilt
+  if (gotTilt) return; lastInput = performance.now();
+  tax = (e.clientX / innerWidth - 0.5) * 2 * MAXA; tay = -(e.clientY / innerHeight - 0.5) * 2 * MAXA * 0.7;
+});
+canvas.addEventListener('dblclick', () => { base = null; });   // re-centre
+
+// ---- drag to turn, pinch to zoom ----
+const ptrs = new Map(); let pinch0 = 0, scale0 = 1, autoSpin = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, e); autoSpin = false;
+  if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); scale0 = userScale; } });
+canvas.addEventListener('pointermove', e => {
+  const prev = ptrs.get(e.pointerId); if (!prev) return; ptrs.set(e.pointerId, e);
+  if (ptrs.size === 1 && e.pointerType !== 'mouse' || (e.pointerType === 'mouse' && e.buttons)) spinner.rotation.y += (e.clientX - prev.clientX) * 0.01;
+  else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()];
+    userScale = Math.max(0.6, Math.min(3, scale0 * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch0)); place(); }
+});
+['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, e => ptrs.delete(e.pointerId)));
+canvas.addEventListener('wheel', e => { userScale = Math.max(0.6, Math.min(3, userScale * (e.deltaY < 0 ? 1.08 : 0.93))); place(); e.preventDefault(); }, { passive: false });
+
+renderer.setAnimationLoop(t => {
+  if (!gotTilt && t - lastInput > 3000) { tax = Math.sin(t / 1700) * 0.38; tay = Math.sin(t / 2300) * 0.16; }   // idle sway
+  ax += (tax - ax) * 0.12; ay += (tay - ay) * 0.12;
+  if (autoSpin) spinner.rotation.y += 0.003;
+  const ex = EYE * Math.sin(ax), ey = EYE * Math.sin(ay), ez = EYE * Math.cos(ax) * Math.cos(ay);
+  const n = 0.05, f = 50, k = n / ez;
+  camera.position.set(ex, ey, ez); camera.rotation.set(0, 0, 0); camera.updateMatrixWorld();
+  camera.projectionMatrix.makePerspective((-W/2 - ex) * k, (W/2 - ex) * k, (H/2 - ey) * k, (-H/2 - ey) * k, n, f);
+  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+  renderer.render(scene, camera);
+});
+</script>
 </body>
 </html>
