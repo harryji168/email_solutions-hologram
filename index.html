@@ -155,7 +155,8 @@ canvas.addEventListener('pointermove', e => {
   else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()];
     userScale = Math.max(0.3, Math.min(3, scale0 * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / pinch0)); place(); }
 });
-['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, e => ptrs.delete(e.pointerId)));
+['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, e => { ptrs.delete(e.pointerId);
+  if (pyramid) { userScale = Math.min(1, userScale); try { localStorage.setItem('pyramidSize', String(userScale)); } catch (err) {} } }));
 canvas.addEventListener('wheel', e => { userScale = Math.max(0.6, Math.min(3, userScale * (e.deltaY < 0 ? 1.08 : 0.93))); place(); e.preventDefault(); }, { passive: false });
 
 // ---- pyramid viewer mode: four side views around the centre, for a plastic hologram pyramid ----
@@ -165,13 +166,15 @@ var pyramid = false, sheet = false, wasStartHidden = true, wake = null;
 const MODES = ['tilt', 'pyramid', 'sheet', 'screen'];
 var upright = false;
 const NEXT = { tilt: 'Pyramid viewer', pyramid: 'Sheet viewer', sheet: 'Big screen', screen: 'Exit' };
-const TIPS = { pyramid: 'Turn the brightness up and stand the pyramid on the centre of the screen, small end down.',
+const TIPS = { pyramid: 'Pinch to make the four towers fit your pyramid, then put the pyramid over the centre. The size is remembered.',
                screen: 'Big screen view for a projector or TV. Use full screen in your browser.',
                sheet: 'Turn the brightness up. Lean a clear sheet at 45° over the screen, top edge toward you, and look from this side.' };
 let modeName = 'tilt';
 function setMode(name) {
   const was = modeName; modeName = name; pyramid = name === 'pyramid'; sheet = name === 'sheet' || name === 'screen'; upright = name === 'screen';
   const special = pyramid || sheet;
+  userScale = 1;
+  if (pyramid) { try { userScale = Math.max(0.3, Math.min(1, parseFloat(localStorage.getItem('pyramidSize')) || 1)); } catch (e) {} }
   document.body.classList.toggle('pyramid', special);
   modeBtn.textContent = NEXT[name];
   scanEl.hidden = special; box.visible = !special;
@@ -257,9 +260,9 @@ function trackHand(now) {
 
 function renderPyramid() {
   if (!size) { renderer.clear(); return; }
-  const w = innerWidth, h = innerHeight, S = Math.min(w, h), cx = w / 2, cy = h / 2;
+  const w = innerWidth, h = innerHeight, S = Math.min(w, h) * Math.min(1, userScale), cx = w / 2, cy = h / 2;   // pinch resizes the whole layout to fit the pyramid
   const gap = S * 0.07, r = S / 2 - gap, tw = S * 0.34;      // r: cell length away from the centre, tw: cell width
-  const halfLen = size.y * 0.52 / userScale, halfWid = halfLen * tw / r;
+  const halfLen = size.y * 0.52, halfWid = halfLen * tw / r;
   pivot.rotation.x = 0; pivot.position.set(0, 0, 0); pivot.scale.setScalar(1);
   if (!gestures) spinner.rotation.y += 0.006;
   renderer.setScissorTest(false); renderer.setViewport(0, 0, w, h); renderer.clear();
