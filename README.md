@@ -35,3 +35,10 @@ Tap **Hand gestures** and allow camera access. Move an open hand left or right
 to turn the tower; pinch thumb and index finger and move up or down to zoom.
 Works in every mode. Hand tracking uses MediaPipe and runs in the browser; no
 video leaves the device.
+
+## Videos for LED hologram fans
+
+- `fan/taipei101_fan_720.mp4` - 720x720, for a large fan
+- `fan/taipei101_smallfan_320.mp4` - 320x320, bolder and brighter, for a small 160-LED fan
+
+Both are 10 seconds at 30 fps on a pure black background and loop cleanly.
